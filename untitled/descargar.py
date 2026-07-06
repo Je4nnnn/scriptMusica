@@ -80,9 +80,8 @@ def verificar_ffmpeg():
     ffprobe = shutil.which("ffprobe")
 
     if not ffmpeg or not ffprobe:
-        print("\n[AVISO] No se detectó FFmpeg/FFprobe en el sistema.")
-        print("El .bat intenta instalar FFmpeg automáticamente con winget.")
-        print("Si la conversión falla, cierra esta ventana y vuelve a abrir el .bat.")
+        print("\n[ERROR] No se detectó FFmpeg/FFprobe.")
+        print("Inicia el programa mediante EJECUTAR_DESCARGADOR_WINDOWS.bat.")
         return False
 
     return True
@@ -198,7 +197,9 @@ def main():
         return
 
     mostrar_header()
-    verificar_ffmpeg()
+    if not verificar_ffmpeg():
+        input("\nPresiona ENTER para salir...")
+        return
 
     formato = elegir_formato()
     descargar_playlist = elegir_playlist()

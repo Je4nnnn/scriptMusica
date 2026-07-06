@@ -68,47 +68,68 @@ if not exist ".venv\Scripts\python.exe" (
 set "VENV_PY=.venv\Scripts\python.exe"
 
 rem ============================================================
-rem 4) INSTALAR / ACTUALIZAR DEPENDENCIAS
+rem 4) INSTALAR DEPENDENCIAS DE PYTHON
 rem ============================================================
 
-echo.
-echo Actualizando pip...
-"%VENV_PY%" -m pip install --upgrade pip
+"%VENV_PY%" -c "import yt_dlp" >nul 2>nul
 if errorlevel 1 (
-    echo [ERROR] No se pudo actualizar pip.
     echo.
-    pause
-    exit /b 1
-)
+    echo Instalando yt-dlp por primera vez...
+    "%VENV_PY%" -m pip install --upgrade pip
+    if errorlevel 1 goto :error_pip
 
-echo.
-echo Instalando / actualizando yt-dlp...
-"%VENV_PY%" -m pip install --upgrade "yt-dlp[default]"
-if errorlevel 1 (
-    echo [ERROR] No se pudo instalar yt-dlp.
-    echo.
-    pause
-    exit /b 1
+    "%VENV_PY%" -m pip install "yt-dlp[default]"
+    if errorlevel 1 goto :error_ytdlp
 )
 
 rem ============================================================
-rem 5) VERIFICAR FFMPEG
+rem 5) PREPARAR FFMPEG LOCALMENTE (NO REQUIERE WINGET)
 rem ============================================================
 
+set "FFMPEG_BIN="
+
+rem Primero se acepta una instalacion que ya este en PATH.
 where ffmpeg >nul 2>nul
-if errorlevel 1 (
-    echo.
-    echo [AVISO] No se encontro FFmpeg.
-    echo FFmpeg es necesario para convertir audio a MP3, WAV, FLAC o M4A.
-    echo.
-    echo Puedes instalarlo con winget ejecutando:
-    echo winget install Gyan.FFmpeg
-    echo.
-    echo O descargarlo manualmente desde:
-    echo https://www.gyan.dev/ffmpeg/builds/
-    echo.
-    pause
+if not errorlevel 1 (
+    where ffprobe >nul 2>nul
+    if not errorlevel 1 goto :ffmpeg_listo
 )
+
+rem Si ya fue descargado por este lanzador, se reutiliza.
+if exist ".tools\ffmpeg" (
+    for /f "delims=" %%D in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Get-ChildItem -Path '.tools\ffmpeg' -Filter 'ffmpeg.exe' -Recurse -File ^| Select-Object -First 1; if ($f) { $f.DirectoryName }"') do set "FFMPEG_BIN=%%D"
+)
+
+if not defined FFMPEG_BIN (
+    echo.
+    echo FFmpeg no esta instalado. Descargando una copia local...
+    echo Esto solo se realiza la primera vez y no requiere winget.
+    echo.
+
+    if not exist ".tools" mkdir ".tools"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$ErrorActionPreference = 'Stop';" ^
+      "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+      "$url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';" ^
+      "$zip = Join-Path (Get-Location) '.tools\ffmpeg.zip';" ^
+      "$dest = Join-Path (Get-Location) '.tools\ffmpeg';" ^
+      "Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing;" ^
+      "if (Test-Path $dest) { Remove-Item $dest -Recurse -Force };" ^
+      "Expand-Archive -Path $zip -DestinationPath $dest -Force;" ^
+      "Remove-Item $zip -Force"
+    if errorlevel 1 goto :error_ffmpeg_download
+
+    for /f "delims=" %%D in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Get-ChildItem -Path '.tools\ffmpeg' -Filter 'ffmpeg.exe' -Recurse -File ^| Select-Object -First 1; if ($f) { $f.DirectoryName }"') do set "FFMPEG_BIN=%%D"
+)
+
+if not defined FFMPEG_BIN goto :error_ffmpeg_files
+set "PATH=%FFMPEG_BIN%;%PATH%"
+
+:ffmpeg_listo
+where ffmpeg >nul 2>nul
+if errorlevel 1 goto :error_ffmpeg_files
+where ffprobe >nul 2>nul
+if errorlevel 1 goto :error_ffmpeg_files
 
 rem ============================================================
 rem 6) EJECUTAR DESCARGADOR
@@ -119,6 +140,34 @@ echo Abriendo descargador...
 echo.
 
 "%VENV_PY%" descargar.py
+set "SCRIPT_EXIT=%errorlevel%"
 
 echo.
 pause
+exit /b %SCRIPT_EXIT%
+
+:error_pip
+echo.
+echo [ERROR] No se pudo preparar pip. Revisa tu conexion a Internet.
+goto :error_exit
+
+:error_ytdlp
+echo.
+echo [ERROR] No se pudo instalar yt-dlp. Revisa tu conexion a Internet.
+goto :error_exit
+
+:error_ffmpeg_download
+echo.
+echo [ERROR] No se pudo descargar o descomprimir FFmpeg.
+echo Revisa tu conexion a Internet y vuelve a ejecutar este archivo.
+goto :error_exit
+
+:error_ffmpeg_files
+echo.
+echo [ERROR] La descarga de FFmpeg no contiene ffmpeg.exe y ffprobe.exe.
+echo Borra la carpeta .tools\ffmpeg y vuelve a ejecutar este archivo.
+
+:error_exit
+echo.
+pause
+exit /b 1

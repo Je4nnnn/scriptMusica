@@ -83,7 +83,7 @@
                             <workingDirectory>${project.basedir}</workingDirectory>
                             <arguments>
                                 <argument>/c</argument>
-                                <argument>EJECUTAR_DESCARGADOR.bat</argument>
+                                <argument>EJECUTAR_DESCARGADOR_WINDOWS.bat</argument>
                             </arguments>
                         </configuration>
                     </plugin>
