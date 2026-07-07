@@ -19,6 +19,7 @@ call :ensure_powershell
 if errorlevel 1 goto :error_powershell
 
 call :ensure_winget
+if errorlevel 1 goto :error_winget_install
 
 rem ============================================================
 rem 2) VERIFICAR / INSTALAR PYTHON
@@ -165,14 +166,31 @@ if not errorlevel 1 (
     exit /b 0
 )
 
-echo winget no esta disponible. Intentando instalar App Installer...
+echo winget no esta disponible. Instalando App Installer y sus dependencias...
+if not exist ".tools" mkdir ".tools"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference = 'Stop';" ^
   "$ProgressPreference = 'SilentlyContinue';" ^
   "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
-  "$pkg = Join-Path $env:TEMP 'Microsoft.DesktopAppInstaller.msixbundle';" ^
-  "Invoke-WebRequest -Uri 'https://aka.ms/getwinget' -OutFile $pkg -UseBasicParsing;" ^
-  "Add-AppxPackage -Path $pkg"
+  "$work = Join-Path (Get-Location) '.tools\winget';" ^
+  "New-Item -ItemType Directory -Force -Path $work | Out-Null;" ^
+  "$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/microsoft/winget-cli/releases/latest';" ^
+  "$bundleAsset = $release.assets | Where-Object { $_.name -eq 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' } | Select-Object -First 1;" ^
+  "$depsAsset = $release.assets | Where-Object { $_.name -eq 'DesktopAppInstaller_Dependencies.zip' } | Select-Object -First 1;" ^
+  "if (-not $bundleAsset -or -not $depsAsset) { throw 'No se encontraron los paquetes oficiales de winget.' }" ^
+  "$bundle = Join-Path $work $bundleAsset.name;" ^
+  "$depsZip = Join-Path $work $depsAsset.name;" ^
+  "$depsDir = Join-Path $work 'dependencies';" ^
+  "Invoke-WebRequest -Uri $bundleAsset.browser_download_url -OutFile $bundle -UseBasicParsing;" ^
+  "Invoke-WebRequest -Uri $depsAsset.browser_download_url -OutFile $depsZip -UseBasicParsing;" ^
+  "if (Test-Path $depsDir) { Remove-Item $depsDir -Recurse -Force };" ^
+  "Expand-Archive -Path $depsZip -DestinationPath $depsDir -Force;" ^
+  "$procArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE };" ^
+  "$arch = switch ($procArch) { 'ARM64' { 'arm64' } 'x86' { 'x86' } default { 'x64' } };" ^
+  "$depPattern = '_(neutral|' + [regex]::Escape($arch) + ')_';" ^
+  "$deps = Get-ChildItem -Path $depsDir -Recurse -File -Include *.appx,*.msix | Where-Object { $_.Name -match $depPattern } | Select-Object -ExpandProperty FullName;" ^
+  "if (-not $deps) { throw 'No se encontraron dependencias compatibles para App Installer.' }" ^
+  "Add-AppxPackage -Path $bundle -DependencyPath $deps -ForceApplicationShutdown"
 
 call :refresh_common_paths
 where winget >nul 2>nul
@@ -182,9 +200,9 @@ if not errorlevel 1 (
     exit /b 0
 )
 
-echo winget no se pudo instalar automaticamente. Se usaran metodos directos.
+echo winget no se pudo instalar automaticamente.
 set "WINGET_AVAILABLE=0"
-exit /b 0
+exit /b 1
 
 
 :install_python_direct
@@ -194,7 +212,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference = 'Stop';" ^
   "$ProgressPreference = 'SilentlyContinue';" ^
   "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
-  "$url = 'https://www.python.org/ftp/python/3.12.11/python-3.12.11-amd64.exe';" ^
+  "$arch = if ([Environment]::Is64BitOperatingSystem) { 'amd64' } else { 'exe' };" ^
+  "$downloads = (Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/' -UseBasicParsing).Content;" ^
+  "$versions = [regex]::Matches($downloads, 'href=""(3\.12\.[0-9]+)/""') | ForEach-Object { [version]$_.Groups[1].Value } | Sort-Object -Descending;" ^
+  "if (-not $versions) { throw 'No se pudo detectar la ultima version de Python 3.12.' }" ^
+  "$version = $versions[0].ToString();" ^
+  "$file = if ($arch -eq 'amd64') { 'python-' + $version + '-amd64.exe' } else { 'python-' + $version + '.exe' };" ^
+  "$url = 'https://www.python.org/ftp/python/' + $version + '/' + $file;" ^
   "$exe = Join-Path (Get-Location) '.tools\python-installer.exe';" ^
   "Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing"
 if errorlevel 1 exit /b 1
@@ -281,6 +305,13 @@ exit /b 0
 echo.
 echo [ERROR] PowerShell no esta disponible.
 echo En Windows 10/11 normalmente viene instalado. Habilitalo o ejecuta este .bat en una instalacion normal de Windows.
+goto :error_exit
+
+:error_winget_install
+echo.
+echo [ERROR] No se pudo instalar winget/App Installer con sus dependencias.
+echo Revisa tu conexion a Internet y vuelve a ejecutar este archivo.
+echo Si Windows muestra una ventana para permitir instalacion de paquetes, aceptala.
 goto :error_exit
 
 :error_python_install
